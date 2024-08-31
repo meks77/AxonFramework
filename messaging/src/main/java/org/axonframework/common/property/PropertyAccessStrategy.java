@@ -16,9 +16,16 @@
 
 package org.axonframework.common.property;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Iterator;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.SortedSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 import javax.annotation.Nonnull;
 
@@ -26,9 +33,9 @@ import javax.annotation.Nonnull;
 /**
  * Abstract Strategy that provides access to all PropertyAccessStrategy implementations.
  * <p/>
- * Application developers may provide custom PropertyAccessStrategy implementations using the ServiceLoader
- * mechanism. To do so, place a file called {@code org.axonframework.common.property.PropertyAccessStrategy}
- * in the {@code META-INF/services} folder. In this file, place the fully qualified class names of all available
+ * Application developers may provide custom PropertyAccessStrategy implementations using the ServiceLoader mechanism.
+ * To do so, place a file called {@code org.axonframework.common.property.PropertyAccessStrategy} in the
+ * {@code META-INF/services} folder. In this file, place the fully qualified class names of all available
  * implementations.
  * <p/>
  * The factory implementations must be public, non-abstract, have a default public constructor and extend the
@@ -44,10 +51,43 @@ import javax.annotation.Nonnull;
  */
 public abstract class PropertyAccessStrategy implements Comparable<PropertyAccessStrategy> {
 
+    private static final Logger LOG = LoggerFactory.getLogger(PropertyAccessStrategy.class);
+
     private static final ServiceLoader<PropertyAccessStrategy> LOADER =
             ServiceLoader.load(PropertyAccessStrategy.class);
 
     private static final SortedSet<PropertyAccessStrategy> STRATEGIES = new ConcurrentSkipListSet<>();
+
+    private static final Map<MethodKey<?>, Optional<Property<?>>> METHOD_CACHE = new ConcurrentHashMap<>();
+
+    private static class MethodKey<T> {
+
+        private final String propertyName;
+        private final Class<?> targetClass;
+
+        public MethodKey(Class<?> targetClass, String propertyName) {
+            this.propertyName = propertyName;
+            this.targetClass = targetClass;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (o == null || getClass() != o.getClass()) {
+                return false;
+            }
+            MethodKey<?> methodKey = (MethodKey<?>) o;
+            return Objects.equals(propertyName, methodKey.propertyName) && Objects.equals(targetClass,
+                                                                                          methodKey.targetClass);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(propertyName, targetClass);
+        }
+    }
 
     static {
         for (PropertyAccessStrategy factory : LOADER) {
@@ -56,8 +96,8 @@ public abstract class PropertyAccessStrategy implements Comparable<PropertyAcces
     }
 
     /**
-     * Registers a PropertyAccessStrategy implementation at runtime.
-     * Annotated handlers that have already been inspected will not be able to use the newly added strategy.
+     * Registers a PropertyAccessStrategy implementation at runtime. Annotated handlers that have already been inspected
+     * will not be able to use the newly added strategy.
      *
      * @param strategy implementation to register
      */
@@ -85,13 +125,25 @@ public abstract class PropertyAccessStrategy implements Comparable<PropertyAcces
      * @return suitable {@link Property}, or {@code null} if none is found
      */
     public static <T> Property<T> getProperty(Class<? extends T> targetClass, String propertyName) {
-        Property<T> property = null;
+        return propertyFromCache(targetClass, propertyName);
+    }
+
+    private static <T> Property<T> propertyFromCache(Class<? extends T> targetClass, String propertyName) {
+        return (Property<T>) METHOD_CACHE.computeIfAbsent(
+                new MethodKey(targetClass, propertyName),
+                methodKey -> findOutPropertyAccess(methodKey)).orElse(null);
+    }
+
+    private static Optional<Property<?>> findOutPropertyAccess(MethodKey<?> methodKey) {
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("find out property access for class {} and property {}", methodKey.targetClass, methodKey.propertyName);
+        }
+        Property<?> property = null;
         Iterator<PropertyAccessStrategy> strategies = STRATEGIES.iterator();
         while (property == null && strategies.hasNext()) {
-            property = strategies.next().propertyFor(targetClass, propertyName);
+            property = strategies.next().propertyFor(methodKey.targetClass, methodKey.propertyName);
         }
-
-        return property;
+        return Optional.ofNullable(property);
     }
 
     @Override
@@ -120,14 +172,14 @@ public abstract class PropertyAccessStrategy implements Comparable<PropertyAcces
     protected abstract int getPriority();
 
     /**
-     * Returns a Property instance for the given {@code property}, defined in given
-     * {@code targetClass}, or {@code null} if no such property is found on the class.
+     * Returns a Property instance for the given {@code property}, defined in given {@code targetClass}, or {@code null}
+     * if no such property is found on the class.
      *
      * @param targetClass The class on which to find the property
      * @param property    The name of the property to find
      * @param <T>         The type of class on which to find the property
-     * @return the Property instance providing access to the property value, or {@code null} if property could not
-     * be found.
+     * @return the Property instance providing access to the property value, or {@code null} if property could not be
+     * found.
      */
     protected abstract <T> Property<T> propertyFor(Class<? extends T> targetClass, String property);
 }

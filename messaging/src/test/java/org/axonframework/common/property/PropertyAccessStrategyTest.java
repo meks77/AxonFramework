@@ -16,13 +16,20 @@
 
 package org.axonframework.common.property;
 
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 
 class PropertyAccessStrategyTest {
+
+    private Logger log = LoggerFactory.getLogger(PropertyAccessStrategyTest.class);
 
     private PropertyAccessStrategy mock1 = new StubPropertyAccessStrategy(1000, "mock1");
     private PropertyAccessStrategy mock2 = new StubPropertyAccessStrategy(1200, "mock2");
@@ -30,7 +37,7 @@ class PropertyAccessStrategyTest {
     private PropertyAccessStrategy mock4 = new StubPropertyAccessStrategy(1000, "mock4");
     private TestPropertyAccessStrategy testPropertyAccessStrategy = new TestPropertyAccessStrategy();
 
-    @AfterEach
+    @BeforeEach
     void setUp() {
         PropertyAccessStrategy.unregister(mock1);
         PropertyAccessStrategy.unregister(mock2);
@@ -135,6 +142,75 @@ class PropertyAccessStrategyTest {
         protected <T> Property<T> propertyFor(Class<? extends T> targetClass, String property) {
             return new TestPropertyAccessStrategy.StubProperty<>(value);
         }
+    }
+
+    /**
+     * this test should verify that the peformance isn't getting slower.
+     * On my MacBook Pro M1 the duration is about 22ms. Without cache
+     */
+    @Test
+//    @Timeout(value = 30, unit = TimeUnit.MILLISECONDS)
+    void testPerformanceWhenPropertyNotExists() {
+        // cache saves about 92 % cpu time
+        Set<String> propertyNames = IntStream.rangeClosed(1, 10).boxed().map(i -> "notExistingProperty" + i).collect(
+                Collectors.toSet());
+        long start = System.currentTimeMillis();
+        for (int i = 0; i < 10000; i++) {
+            propertyNames.forEach(name -> PropertyAccessStrategy.getProperty(BeanPropertyAccessStrategyTest.TestMessage.class, name));
+        }
+        long end = System.currentTimeMillis();
+        log.info("Used time: {} millis", (end - start));
+    }
+
+    @Test
+//    @Timeout(value = 30, unit = TimeUnit.MILLISECONDS)
+    void testPerformanceWhenUniformMethodExisting() {
+        // cache saves about 92 %
+        long start = System.currentTimeMillis();
+        for (int i = 0; i < 100000; i++) {
+            PropertyAccessStrategy.getProperty(UniformTestMessage.class, "actualProperty");
+        }
+        long end = System.currentTimeMillis();
+        log.info("Used time: {} millis", (end - start));
+    }
+
+
+    @Test
+//    @Timeout(value = 30, unit = TimeUnit.MILLISECONDS)
+    void testPerformanceWhenNoAccessorMethodExist() {
+        // cache saves about 90 % CPU time
+        long start = System.currentTimeMillis();
+        for (int i = 0; i < 100000; i++) {
+            PropertyAccessStrategy.getProperty(TestMessageWithoutAccessor.class, "actualProperty");
+        }
+        long end = System.currentTimeMillis();
+        log.info("Used time: {} millis", (end - start));
+    }
+
+    @Test
+//    @Timeout(value = 30, unit = TimeUnit.MILLISECONDS)
+    void testPerformanceWhenBeanMethodExists() {
+        // cache saves about 88 % CPU time
+        long start = System.currentTimeMillis();
+        for (int i = 0; i < 100000; i++) {
+            PropertyAccessStrategy.getProperty(BeanPropertyAccessStrategyTest.TestMessage.class, "actualProperty");
+        }
+        long end = System.currentTimeMillis();
+        log.info("Used time: {} millis", (end - start));
+    }
+
+    class UniformTestMessage {
+
+        public String actualProperty() {
+            return "propertyValue";
+        }
+
+    }
+
+    class TestMessageWithoutAccessor {
+
+        final String actualProperty = "propertyValue";
+
     }
 }
 
